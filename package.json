@@ -2,7 +2,9 @@
   "name": "typescript-functions",
   "version": "1.0.0",
   "description": "TypeScript functions for testing",
+  "main": "dist/index.js",
   "scripts": {
+    "start": "ts-node src/index.ts",
     "build": "tsc"
   },
   "author": "",
