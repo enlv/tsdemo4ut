@@ -31,20 +31,23 @@ interface User {
     email: string;
 }
 
-export async function fetchAndValidateUser(userId: number): Promise<User | null> {
-    if (userId <= 0) throw new Error("Invalid user ID");
+export function fetchAndValidateUser(userId: number): Promise<User | null> {
+    if (userId <= 0) return Promise.reject(new Error("Invalid user ID"));
 
-    const response = await fetch(`https://jsonplaceholder.typicode.com/users/${userId}`);
-    if (!response.ok) throw new Error("Failed to fetch user");
-
-    const user = await response.json() as User;
-
-    if (!user.name || !user.email) {
-        console.error("Invalid user data");
-        return null;
-    }
-
-    return user;
+    return fetch(`https://jsonplaceholder.typicode.com/users/${userId}`)
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error("Failed to fetch user");
+            }
+            return response.json() as Promise<User>;
+        })
+        .then((user) => {
+            if (!user.name || !user.email) {
+                console.error("Invalid user data");
+                return null;
+            }
+            return user;
+        });
 }
 
 interface Post {
@@ -52,19 +55,25 @@ interface Post {
     title: string;
 }
 
-export async function fetchPostsAndComments(): Promise<{ posts: Post[]; comments: any[] }> {
+export function fetchPostsAndComments(): Promise<{ posts: Post[]; comments: any[] }> {
     const postsUrl = "https://jsonplaceholder.typicode.com/posts";
     const commentsUrl = "https://jsonplaceholder.typicode.com/comments";
-    const [postsResponse, commentsResponse] = await Promise.all([
+
+    return Promise.all([
         fetch(postsUrl),
         fetch(commentsUrl)
-    ]);
-    if (!postsResponse.ok || !commentsResponse.ok) {
-        throw new Error("Failed to fetch posts or comments");
-    }
-    const posts = await postsResponse.json() as Post[];
-    const comments = await commentsResponse.json() as any[];
-    return { posts, comments };
+    ]).then(([postsResponse, commentsResponse]) => {
+        if (!postsResponse.ok || !commentsResponse.ok) {
+            throw new Error("Failed to fetch posts or comments");
+        }
+
+        return Promise.all([
+            postsResponse.json() as Promise<Post[]>,
+            commentsResponse.json() as Promise<any[]>
+        ]);
+    }).then(([posts, comments]) => {
+        return { posts, comments };
+    });
 }
 
 
@@ -73,24 +82,34 @@ interface ServiceStatus {
     status: "success" | "failure";
 }
 
-export async function distributedTransaction(services: string[], simulateServiceCall: (service: string) => Promise<ServiceStatus>): Promise<void> {
+export function distributedTransaction(
+    services: string[],
+    simulateServiceCall: (service: string) => Promise<ServiceStatus>
+): Promise<void> {
     const results: ServiceStatus[] = [];
     const rollbackActions: (() => Promise<void>)[] = [];
 
-    for (const service of services) {
-        try {
-            const result = await simulateServiceCall(service);
-            results.push(result);
-            rollbackActions.push(async () => {
-                console.log(`Rolling back ${service}`);
-            });
-        } catch (err) {
-            console.error(err);
-            for (const rollback of rollbackActions.reverse()) {
-                await rollback();
-            }
-            throw new Error("Distributed transaction failed");
-        }
-    }
-    console.log("All services completed successfully:", results);
+    return services.reduce((promiseChain, service) => {
+        return promiseChain.then(() => 
+            simulateServiceCall(service)
+                .then((result) => {
+                    results.push(result);
+                    rollbackActions.push(() => Promise.resolve(console.log(`Rolling back ${service}`)));
+                })
+                .catch((err) => {
+                    console.error(err);
+                    return rollbackActions
+                        .reverse()
+                        .reduce(
+                            (rollbackChain, rollback) => rollbackChain.then(() => rollback()),
+                            Promise.resolve()
+                        )
+                        .then(() => {
+                            throw new Error("Distributed transaction failed");
+                        });
+                })
+        );
+    }, Promise.resolve()).then(() => {
+        console.log("All services completed successfully:", results);
+    });
 }
